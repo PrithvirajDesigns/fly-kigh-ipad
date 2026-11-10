@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>Fly Kigh</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root { --w: 520px; --sw: 450px; --sh: 650px; }
   html, body { margin: 0; height: 100%; }
@@ -145,6 +148,31 @@
   .content.landscape .vol .fill { top: 0; bottom: 0; right: auto; height: auto !important; }
   .content.landscape .vol svg { left: 1cqmin; bottom: auto; top: 50%; transform: translateY(-50%); }
   .content:not(.landscape) .vol .fill { width: auto !important; }
+
+  /* ---------- hints (Inter) ---------- */
+  .hint, .callout { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .callouts { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
+  .callout {
+    position: absolute; left: 0; top: 0; max-width: 220px;
+    padding: 7px 11px; border-radius: 9px; white-space: nowrap;
+    font-size: 12.5px; line-height: 1.25; font-weight: 500; letter-spacing: -.005em; color: #253041;
+    background: rgba(255,255,255,.96); box-shadow: 0 4px 16px rgba(30,45,70,.14), 0 0 0 .5px rgba(30,45,70,.12);
+    opacity: 0; transform: translate(var(--tx, 0), var(--ty, 0)) scale(.96);
+    transition: opacity .35s ease, transform .35s cubic-bezier(.2,.8,.2,1);
+  }
+  .callout b { font-weight: 600; color: #111827; }
+  .callout.show { opacity: 1; transform: translate(0, 0) scale(1); }
+  /* little arrow pointing at the button */
+  .callout::after {
+    content: ""; position: absolute; width: 9px; height: 9px; background: inherit;
+    box-shadow: inherit; clip-path: polygon(0 0, 100% 0, 100% 100%); transform: rotate(var(--rot));
+    left: var(--ax); top: var(--ay);
+  }
+  .callout.side-top    { --ty: 6px; }   .callout.side-top::after    { --rot: 135deg; }
+  .callout.side-bottom { --ty: -6px; }  .callout.side-bottom::after { --rot: -45deg; }
+  .callout.side-left   { --tx: 6px; }   .callout.side-left::after   { --rot: 45deg; }
+  .callout.side-right  { --tx: -6px; }  .callout.side-right::after  { --rot: -135deg; }
+  @media (prefers-reduced-motion: reduce) { .callout { transition: opacity .2s; transform: none !important; } }
   .hint { flex-basis: 100%; letter-spacing: .01em; color: #7a8494; text-align: center; min-height: 1.3em; }
   .hint b { color: #3d4757; font-weight: 600; }
   @media (prefers-reduced-motion: reduce) { .device, .stage, .content, .off, .glass { transition: none } .screen.booting .flash { animation: none } }
@@ -319,6 +347,10 @@
     </div>
   </div>
 
+  <div class="callouts" aria-hidden="true">
+    <div class="callout" id="tipPower"><b>Top button</b> · wake / lock the screen</div>
+    <div class="callout" id="tipVol"><b>Volume buttons</b> · tap or hold</div>
+  </div>
   <div class="controls">
     <div class="seg" role="group" aria-label="Orientation">
       <button id="btnPortrait" aria-pressed="true" title="Portrait">
@@ -461,6 +493,7 @@ function setOrientation(o) {
   $('btnLandscape').setAttribute('aria-pressed', o === 'landscape');
   const newW = fitWidth(o), h = newW * VB_H / VB_W;
   UI_SND.rotate();
+  hideTips();
   content.classList.add('hide');                             // like a real tablet: content fades while it turns
   // turn the device and grow/shrink it to its new fit in one motion
   device.style.setProperty('--rot', o === 'portrait' ? '0deg' : '-90deg');
@@ -473,7 +506,7 @@ function setOrientation(o) {
     if (done) return; done = true;
     orient = o;
     instant(() => applyLayout(o, newW));                     // bake the scale into real sizes (keeps text crisp)
-    setTimeout(() => { content.classList.remove('hide'); busy = false; }, 60);
+    setTimeout(() => { content.classList.remove('hide'); busy = false; repositionTips(); }, 60);
   };
   device.addEventListener('transitionend', function te(e) { if (e.propertyName === 'transform') { device.removeEventListener('transitionend', te); finish(); } });
   setTimeout(finish, 900);                                   // fallback if transitions are disabled
@@ -484,6 +517,48 @@ addEventListener('resize', () => { if (!busy) instant(() => applyLayout(orient, 
 instant(() => applyLayout(orient, fitWidth(orient)));
 $('btnPortrait').setAttribute('aria-pressed', orient === 'portrait');
 $('btnLandscape').setAttribute('aria-pressed', orient === 'landscape');
+
+
+/* ---------- disappearing hints next to the hardware buttons ---------- */
+const tips = { power: { el: $('tipPower'), target: () => [$('power')] },
+               vol:   { el: $('tipVol'),   target: () => [$('volUp'), $('volDn')] } };
+function placeTip(t) {
+  const rs = t.target().map(e => e.getBoundingClientRect());
+  const r = { left: Math.min(...rs.map(q => q.left)), right: Math.max(...rs.map(q => q.right)),
+              top: Math.min(...rs.map(q => q.top)), bottom: Math.max(...rs.map(q => q.bottom)) };
+  const cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2, d = device.getBoundingClientRect();
+  // which edge of the tablet is the button on? the hint goes just outside that edge
+  const dist = { top: cy - d.top, bottom: d.bottom - cy, left: cx - d.left, right: d.right - cx };
+  let side = Object.keys(dist).reduce((a, b) => dist[a] <= dist[b] ? a : b);
+  const el = t.el, w = el.offsetWidth, h = el.offsetHeight, gap = 14, m = 8;
+  // not enough room outside the tablet (e.g. a phone)? put the bubble on the near side instead
+  if (side === 'right' && r.right + gap + w > innerWidth - m) side = 'left';
+  else if (side === 'left' && r.left - gap - w < m) side = 'right';
+  else if (side === 'top' && r.top - gap - h < m) side = 'bottom';
+  else if (side === 'bottom' && r.bottom + gap + h > innerHeight - m) side = 'top';
+  let x, y;
+  if (side === 'top')    { x = cx - w / 2; y = r.top - h - gap; }
+  if (side === 'bottom') { x = cx - w / 2; y = r.bottom + gap; }
+  if (side === 'left')   { x = r.left - w - gap; y = cy - h / 2; }
+  if (side === 'right')  { x = r.right + gap; y = cy - h / 2; }
+  x = Math.max(m, Math.min(innerWidth - w - m, x));
+  y = Math.max(m, Math.min(innerHeight - h - m, y));
+  el.style.left = x + 'px'; el.style.top = y + 'px';
+  el.className = el.className.replace(/\bside-\w+/g, '').trim() + ' side-' + side;
+  // keep the arrow pointing at the button even when the bubble was nudged to stay on screen
+  const ax = side === 'left' ? w - 5 : side === 'right' ? -4 : Math.max(10, Math.min(w - 19, cx - x - 4.5));
+  const ay = side === 'top' ? h - 5 : side === 'bottom' ? -4 : Math.max(6, Math.min(h - 15, cy - y - 4.5));
+  el.style.setProperty('--ax', ax + 'px'); el.style.setProperty('--ay', ay + 'px');
+}
+function showTips(ms = 6500) {
+  for (const t of Object.values(tips)) { if (t.done) continue; placeTip(t); t.el.classList.add('show'); }
+  clearTimeout(showTips.t); showTips.t = setTimeout(hideTips, ms);
+}
+function hideTips() { for (const t of Object.values(tips)) t.el.classList.remove('show'); }
+function retireTip(key) { const t = tips[key]; t.done = true; t.el.classList.remove('show'); }
+const repositionTips = () => { for (const t of Object.values(tips)) if (t.el.classList.contains('show')) placeTip(t); };
+addEventListener('resize', repositionTips);
+setTimeout(() => showTips(), 900);
 
 /* ---------- power ---------- */
 /* ---------- lock-screen clock: custom condensed glass numerals ---------- */
@@ -634,12 +709,12 @@ off.addEventListener('pointerup', e => {
   else { lastTap = now; lastX = e.clientX; lastY = e.clientY; }
 });
 off.addEventListener('dblclick', e => { e.preventDefault(); turnOn(); });
-power.addEventListener('click', () => isOn ? turnOff() : turnOn());
+power.addEventListener('click', () => { retireTip('power'); isOn ? turnOff() : turnOn(); });
 for (const [id, d] of [['volUp', 1], ['volDn', -1]]) {
   const el = $(id); let rep = 0, hold = 0;
   const stop = () => { clearTimeout(hold); clearInterval(rep); };
   el.addEventListener('pointerdown', e => {
-    e.preventDefault(); changeVolume(d);
+    e.preventDefault(); retireTip('vol'); changeVolume(d);
     hold = setTimeout(() => { rep = setInterval(() => changeVolume(d), 110); }, 380);   // hold to keep changing
   });
   ['pointerup', 'pointerleave', 'pointercancel'].forEach(t => el.addEventListener(t, stop));
